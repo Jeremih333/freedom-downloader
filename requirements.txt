@@ -1,6 +1,5 @@
 python-telegram-bot
 yt-dlp
 mutagen
-moviepy
 Pillow
 requests
