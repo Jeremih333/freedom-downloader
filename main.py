@@ -7,6 +7,8 @@ from datetime import datetime
 from io import BytesIO
 import random
 import string
+import time
+import json
 
 import requests
 from PIL import Image
@@ -41,6 +43,8 @@ PORT = int(os.environ.get("PORT", 5000))
 TOKEN = os.environ["TOKEN"]
 SUPPORT_CHAT_LINK = "https://t.me/freedom346"
 YOUTUBE_COOKIES = os.environ.get("YOUTUBE_COOKIES")
+MAX_RETRIES = 3  # Максимальное количество попыток при ошибках 429
+RETRY_DELAY = 5   # Задержка между попытками в секундах
 
 # Глобальные переменные для управления состоянием
 USER_STATES = {}
@@ -83,30 +87,51 @@ class MediaProcessor:
             },
             "source_address": "0.0.0.0",
             "force_ipv4": True,
-            "verbose": True
+            "verbose": True,
+            "retries": 10,
+            "fragment_retries": 10,
+            "skip_unavailable_fragments": True,
+            "retry_sleep_functions": {
+                "http": lambda n: 3 + 0.5 * n,
+                "fragment": lambda n: 3 + 0.5 * n,
+                "file_access": lambda n: 3 + 0.5 * n,
+            },
+            "sleep_interval": 5,
+            "max_sleep_interval": 30,
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
 
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            
-            if not info or 'entries' in info:
-                raise Exception("Playlist detected - use playlist handling instead")
-                
-            filename = ydl.prepare_filename(info)
-            
-            if media_type == "audio":
-                filename = filename.replace(".webm", ".mp3").replace(".m4a", ".mp3")
-            
-            thumbnail_path = filename.rsplit(".", 1)[0] + ".webp"
-            
-            # Конвертируем thumbnail в JPG
-            if os.path.exists(thumbnail_path):
-                img = Image.open(thumbnail_path)
-                jpg_path = thumbnail_path.replace(".webp", ".jpg")
-                img.convert("RGB").save(jpg_path, "JPEG")
-                thumbnail_path = jpg_path
-            
-            return filename, thumbnail_path, info
+        retries = 0
+        while retries < MAX_RETRIES:
+            try:
+                with YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    
+                    if not info or 'entries' in info:
+                        raise Exception("Playlist detected - use playlist handling instead")
+                        
+                    filename = ydl.prepare_filename(info)
+                    
+                    if media_type == "audio":
+                        filename = filename.replace(".webm", ".mp3").replace(".m4a", ".mp3")
+                    
+                    thumbnail_path = filename.rsplit(".", 1)[0] + ".webp"
+                    
+                    # Конвертируем thumbnail в JPG
+                    if os.path.exists(thumbnail_path):
+                        img = Image.open(thumbnail_path)
+                        jpg_path = thumbnail_path.replace(".webp", ".jpg")
+                        img.convert("RGB").save(jpg_path, "JPEG")
+                        thumbnail_path = jpg_path
+                    
+                    return filename, thumbnail_path, info
+            except Exception as e:
+                if "429" in str(e) and retries < MAX_RETRIES - 1:
+                    logger.warning(f"Ошибка 429, повторная попытка {retries+1}/{MAX_RETRIES}")
+                    retries += 1
+                    time.sleep(RETRY_DELAY)
+                else:
+                    raise
 
     @staticmethod
     def add_metadata(file_path: str, thumbnail_path: str, info: dict):
@@ -194,13 +219,33 @@ class MediaProcessor:
                 "format": "bestaudio/best",
                 "default_search": "ytsearch10",
                 "quiet": True,
-                "cookiefile": YOUTUBE_COOKIES if YOUTUBE_COOKIES else None
+                "cookiefile": YOUTUBE_COOKIES if YOUTUBE_COOKIES else None,
+                "retries": 10,
+                "fragment_retries": 10,
+                "skip_unavailable_fragments": True,
+                "retry_sleep_functions": {
+                    "http": lambda n: 3 + 0.5 * n,
+                    "fragment": lambda n: 3 + 0.5 * n,
+                    "file_access": lambda n: 3 + 0.5 * n,
+                },
+                "sleep_interval": 5,
+                "max_sleep_interval": 30,
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             }
             
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(f"ytsearch10:{query}", download=False)
                 if info and 'entries' in info:
-                    results.extend(info['entries'])
+                    for entry in info['entries']:
+                        if entry:  # Фильтруем пустые записи
+                            results.append({
+                                "id": entry.get("id"),
+                                "title": entry.get("title", "Без названия"),
+                                "uploader": entry.get("uploader", "Неизвестный исполнитель"),
+                                "url": entry.get("url") or f"https://youtu.be/{entry.get('id')}",
+                                "source": "youtube",
+                                "duration": entry.get("duration", 0)
+                            })
         except Exception as e:
             logger.error(f"YouTube search error: {e}")
         
@@ -232,7 +277,14 @@ class MediaProcessor:
         except Exception as e:
             logger.error(f"Yandex Music search error: {e}")
         
-        return results
+        # Сортируем результаты по релевантности (длительность > 0, название содержит запрос)
+        results.sort(key=lambda x: (
+            x.get("duration", 0) > 0,
+            query.lower() in x.get("title", "").lower(),
+            -x.get("duration", 0)
+        ), reverse=True)
+        
+        return results[:50]  # Ограничиваем количество результатов
 
     @staticmethod
     def search_vk(query: str):
@@ -242,7 +294,8 @@ class MediaProcessor:
             "title": f"{query} (VK)",
             "uploader": "VK Artist",
             "url": f"https://vk.com/music?q={query}",
-            "source": "vk"
+            "source": "vk",
+            "duration": random.randint(120, 300)
         } for _ in range(3)]
 
     @staticmethod
@@ -253,7 +306,8 @@ class MediaProcessor:
             "title": f"{query} (Spotify)",
             "uploader": "Spotify Artist",
             "url": f"https://open.spotify.com/search/{query}",
-            "source": "spotify"
+            "source": "spotify",
+            "duration": random.randint(120, 300)
         } for _ in range(3)]
 
     @staticmethod
@@ -264,7 +318,8 @@ class MediaProcessor:
             "title": f"{query} (Deezer)",
             "uploader": "Deezer Artist",
             "url": f"https://www.deezer.com/search/{query}",
-            "source": "deezer"
+            "source": "deezer",
+            "duration": random.randint(120, 300)
         } for _ in range(3)]
 
     @staticmethod
@@ -275,7 +330,8 @@ class MediaProcessor:
             "title": f"{query} (Yandex Music)",
             "uploader": "Yandex Artist",
             "url": f"https://music.yandex.ru/search?text={query}",
-            "source": "yandex"
+            "source": "yandex",
+            "duration": random.randint(120, 300)
         } for _ in range(3)]
 
 # Команда /start
@@ -310,9 +366,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ydl_opts = {
                 'extract_flat': True,
                 'quiet': True,
+                'cookiefile': YOUTUBE_COOKIES if YOUTUBE_COOKIES else None,
+                'user_agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             }
-            if YOUTUBE_COOKIES:
-                ydl_opts['cookiefile'] = YOUTUBE_COOKIES
             
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(user_input, download=False)
@@ -336,7 +392,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Показать варианты для плейлиста
 async def show_playlist_options(update: Update, playlist_info: dict):
     keyboard = [
-        [InlineKeyboardButton("🔍 Выбрать треки", callback_data="playlist_choose_tracks")]
+        [InlineKeyboardButton("🔍 Выбрать треки", callback_data="playlist_choose_tracks")],
+        [InlineKeyboardButton("⬇️ Скачать все треки", callback_data="playlist_download_all")]
     ]
     await update.message.reply_text(
         f"🎵 Найден плейлист: {playlist_info.get('title', 'Без названия')}\n"
@@ -469,7 +526,7 @@ async def show_search_results(update: Update, chat_id: int, page: int):
         return
     
     keyboard = []
-    for track in page_tracks:
+    for i, track in enumerate(page_tracks):
         source_icon = ""
         if "source" in track:
             if track["source"] == "vk":
@@ -485,10 +542,11 @@ async def show_search_results(update: Update, chat_id: int, page: int):
                 
         title = track.get("title", "Без названия")
         if len(title) > 30:
-            title = title[:30] + "..."
+            title = title[:27] + "..."
         
+        # Добавляем номер трека на странице
         keyboard.append([InlineKeyboardButton(
-            f"{source_icon} {title}",
+            f"{i+1}. {source_icon} {title}",
             callback_data=f"track_{track['id']}"
         )])
     
@@ -496,7 +554,10 @@ async def show_search_results(update: Update, chat_id: int, page: int):
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("◀️ Назад", callback_data=f"page_{page-1}"))
-    if end_idx < len(tracks):
+    
+    nav_buttons.append(InlineKeyboardButton(f"{page+1}/{len(tracks)//page_size+1}", callback_data="current_page"))
+    
+    if (page + 1) * page_size < len(tracks):
         nav_buttons.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"page_{page+1}"))
     
     if nav_buttons:
@@ -507,13 +568,17 @@ async def show_search_results(update: Update, chat_id: int, page: int):
         InlineKeyboardButton("🎧 Альбомы", callback_data="albums")
     ])
     
-    message_text = f"🔍 Результаты поиска (страница {page+1}):"
+    message_text = f"🔍 Результаты поиска:"
     
     if update.callback_query:
-        await update.callback_query.edit_message_text(
-            message_text,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        try:
+            await update.callback_query.edit_message_text(
+                message_text,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except:
+            # Если сообщение не изменяется (например, одинаковый контент), просто игнорируем
+            pass
     else:
         await update.message.reply_text(
             message_text,
@@ -620,6 +685,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await download_all_tracks(update, context, chat_id)
     elif data == "playlist_choose_tracks":
         await choose_playlist_tracks(update, context)
+    elif data == "playlist_download_all":
+        await download_playlist_all(update, context)
 
 # Выбор треков из плейлиста
 async def choose_playlist_tracks(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -632,9 +699,90 @@ async def choose_playlist_tracks(update: Update, context: ContextTypes.DEFAULT_T
     SEARCH_PAGE[chat_id] = 0
     await show_search_results(update, chat_id, 0)
 
+# Скачать все треки из плейлиста
+async def download_playlist_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = query.message.chat_id
+    playlist_info = USER_STATES[chat_id]['playlist']
+    playlist_url = USER_STATES[chat_id]['url']
+    
+    await query.edit_message_text("⏳ Начинаю скачивание всего плейлиста...")
+    
+    try:
+        # Создаем временную папку для плейлиста
+        playlist_dir = f"playlist_{chat_id}_{int(time.time())}"
+        os.makedirs(playlist_dir, exist_ok=True)
+        
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": os.path.join(playlist_dir, "%(title)s.%(ext)s"),
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+            "writethumbnail": True,
+            "ignoreerrors": True,
+            "cookiefile": YOUTUBE_COOKIES if YOUTUBE_COOKIES else None,
+            "retries": 10,
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(playlist_url, download=True)
+            
+            if not info or 'entries' not in info:
+                await query.edit_message_text("❌ Не удалось скачать плейлист")
+                return
+                
+            # Отправляем каждый трек из плейлиста
+            for entry in info['entries']:
+                if not entry:
+                    continue
+                    
+                file_path = ydl.prepare_filename(entry)
+                file_path = file_path.replace(".webm", ".mp3").replace(".m4a", ".mp3")
+                
+                thumbnail_path = file_path.rsplit(".", 1)[0] + ".webp"
+                if os.path.exists(thumbnail_path):
+                    img = Image.open(thumbnail_path)
+                    jpg_path = thumbnail_path.replace(".webp", ".jpg")
+                    img.convert("RGB").save(jpg_path, "JPEG")
+                    thumbnail_path = jpg_path
+                
+                MediaProcessor.add_metadata(file_path, thumbnail_path, entry)
+                
+                with open(file_path, "rb") as audio_file:
+                    await context.bot.send_audio(
+                        chat_id,
+                        audio=audio_file,
+                        caption=f"🎵 {entry.get('title', '')}\n\nПрисоединяйтесь к нашему чату: {SUPPORT_CHAT_LINK}",
+                        thumb=open(thumbnail_path, "rb") if os.path.exists(thumbnail_path) else None
+                    )
+                
+                # Удаляем временные файлы
+                os.remove(file_path)
+                if os.path.exists(thumbnail_path):
+                    os.remove(thumbnail_path)
+                
+                await asyncio.sleep(1)  # Небольшая задержка между отправками
+        
+        # Удаляем временную папку
+        for file in os.listdir(playlist_dir):
+            os.remove(os.path.join(playlist_dir, file))
+        os.rmdir(playlist_dir)
+        
+        await query.edit_message_text("✅ Весь плейлист успешно скачан и отправлен!")
+            
+    except Exception as e:
+        logger.error(f"Ошибка скачивания плейлиста: {e}")
+        await query.edit_message_text(f"❌ Ошибка при скачивании плейлиста: {str(e)}")
+
 # Скачать конкретный трек
 async def download_track(update: Update, context: ContextTypes.DEFAULT_TYPE, track_id: str):
     query = update.callback_query
+    await query.answer()
     chat_id = query.message.chat_id
     tracks = SEARCH_RESULTS.get(chat_id, [])
     
@@ -673,6 +821,7 @@ async def download_track(update: Update, context: ContextTypes.DEFAULT_TYPE, tra
 # Скачать все треки на странице
 async def download_all_tracks(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     query = update.callback_query
+    await query.answer()
     await query.edit_message_text("⏳ Начинаю скачивание всех треков...")
     
     tracks = SEARCH_RESULTS.get(chat_id, [])
@@ -682,7 +831,7 @@ async def download_all_tracks(update: Update, context: ContextTypes.DEFAULT_TYPE
     end_idx = min(start_idx + page_size, len(tracks))
     page_tracks = tracks[start_idx:end_idx]
     
-    for track in page_tracks:
+    for i, track in enumerate(page_tracks):
         try:
             url = track.get("url") or f"https://youtu.be/{track['id']}"
             file_path, thumbnail_path, info = MediaProcessor.download_media(url, "audio")
@@ -692,7 +841,7 @@ async def download_all_tracks(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await context.bot.send_audio(
                     chat_id,
                     audio=audio_file,
-                    caption=f"🎵 {track['title']}\n\nПрисоединяйтесь к нашему чату: {SUPPORT_CHAT_LINK}",
+                    caption=f"{i+1}. 🎵 {track['title']}\n\nПрисоединяйтесь к нашему чату: {SUPPORT_CHAT_LINK}",
                     thumb=open(thumbnail_path, "rb") if os.path.exists(thumbnail_path) else None
                 )
             
@@ -700,7 +849,7 @@ async def download_all_tracks(update: Update, context: ContextTypes.DEFAULT_TYPE
             if os.path.exists(thumbnail_path):
                 os.remove(thumbnail_path)
                 
-            await asyncio.sleep(2)  # Задержка между отправками
+            await asyncio.sleep(1)  # Задержка между отправками
                 
         except Exception as e:
             logger.error(f"Ошибка скачивания трека {track['title']}: {e}")
