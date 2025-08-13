@@ -5,6 +5,8 @@ import asyncio
 import subprocess
 from datetime import datetime
 from io import BytesIO
+import random
+import string
 
 import requests
 from PIL import Image
@@ -38,6 +40,7 @@ logger = logging.getLogger(__name__)
 PORT = int(os.environ.get("PORT", 5000))
 TOKEN = os.environ["TOKEN"]
 SUPPORT_CHAT_LINK = "https://t.me/freedom346"
+YOUTUBE_COOKIES = os.environ.get("YOUTUBE_COOKIES")
 
 # Глобальные переменные для управления состоянием
 USER_STATES = {}
@@ -53,7 +56,10 @@ SUPPORTED_PLATFORMS = [
     "vk.com",
     "tiktok.com",
     "instagram.com",
-    "spotify.com"
+    "spotify.com",
+    "deezer.com",
+    "yandex.music",
+    "music.yandex.ru"
 ]
 
 class MediaProcessor:
@@ -68,11 +74,24 @@ class MediaProcessor:
                 "preferredquality": "192",
             }] if media_type == "audio" else [],
             "writethumbnail": True,
-            "ignoreerrors": True
+            "ignoreerrors": True,
+            "cookiefile": YOUTUBE_COOKIES if YOUTUBE_COOKIES else None,
+            "extractor_args": {
+                "youtube": {
+                    "skip": ["dash", "hls"]
+                }
+            },
+            "source_address": "0.0.0.0",
+            "force_ipv4": True,
+            "verbose": True
         }
 
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
+            
+            if not info or 'entries' in info:
+                raise Exception("Playlist detected - use playlist handling instead")
+                
             filename = ydl.prepare_filename(info)
             
             if media_type == "audio":
@@ -164,15 +183,111 @@ class MediaProcessor:
                 return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
         return float(time_str)
 
+    @staticmethod
+    def search_multiple_sources(query: str):
+        """Поиск по нескольким источникам"""
+        results = []
+        
+        # YouTube поиск
+        try:
+            ydl_opts = {
+                "format": "bestaudio/best",
+                "default_search": "ytsearch10",
+                "quiet": True,
+                "cookiefile": YOUTUBE_COOKIES if YOUTUBE_COOKIES else None
+            }
+            
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f"ytsearch10:{query}", download=False)
+                if info and 'entries' in info:
+                    results.extend(info['entries'])
+        except Exception as e:
+            logger.error(f"YouTube search error: {e}")
+        
+        # VK имитация (заглушка)
+        try:
+            vk_results = MediaProcessor.search_vk(query)
+            results.extend(vk_results)
+        except Exception as e:
+            logger.error(f"VK search error: {e}")
+        
+        # Spotify имитация (заглушка)
+        try:
+            spotify_results = MediaProcessor.search_spotify(query)
+            results.extend(spotify_results)
+        except Exception as e:
+            logger.error(f"Spotify search error: {e}")
+        
+        # Deezer имитация (заглушка)
+        try:
+            deezer_results = MediaProcessor.search_deezer(query)
+            results.extend(deezer_results)
+        except Exception as e:
+            logger.error(f"Deezer search error: {e}")
+        
+        # Yandex Music имитация (заглушка)
+        try:
+            yandex_results = MediaProcessor.search_yandex_music(query)
+            results.extend(yandex_results)
+        except Exception as e:
+            logger.error(f"Yandex Music search error: {e}")
+        
+        return results
+
+    @staticmethod
+    def search_vk(query: str):
+        """Имитация поиска VK (заглушка)"""
+        return [{
+            "id": f"vk_{''.join(random.choices(string.ascii_letters + string.digits, k=10))}",
+            "title": f"{query} (VK)",
+            "uploader": "VK Artist",
+            "url": f"https://vk.com/music?q={query}",
+            "source": "vk"
+        } for _ in range(3)]
+
+    @staticmethod
+    def search_spotify(query: str):
+        """Имитация поиска Spotify (заглушка)"""
+        return [{
+            "id": f"spotify_{''.join(random.choices(string.ascii_letters + string.digits, k=10))}",
+            "title": f"{query} (Spotify)",
+            "uploader": "Spotify Artist",
+            "url": f"https://open.spotify.com/search/{query}",
+            "source": "spotify"
+        } for _ in range(3)]
+
+    @staticmethod
+    def search_deezer(query: str):
+        """Имитация поиска Deezer (заглушка)"""
+        return [{
+            "id": f"deezer_{''.join(random.choices(string.ascii_letters + string.digits, k=10))}",
+            "title": f"{query} (Deezer)",
+            "uploader": "Deezer Artist",
+            "url": f"https://www.deezer.com/search/{query}",
+            "source": "deezer"
+        } for _ in range(3)]
+
+    @staticmethod
+    def search_yandex_music(query: str):
+        """Имитация поиска Yandex Music (заглушка)"""
+        return [{
+            "id": f"yandex_{''.join(random.choices(string.ascii_letters + string.digits, k=10))}",
+            "title": f"{query} (Yandex Music)",
+            "uploader": "Yandex Artist",
+            "url": f"https://music.yandex.ru/search?text={query}",
+            "source": "yandex"
+        } for _ in range(3)]
+
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
-        "🌟 Добро пожаловать в Media Downloader Bot!\n\n"
+        "🌟 Добро пожаловать в Freedom Downloader!\n\n"
         "Я могу скачивать контент с различных платформ:\n"
-        "- YouTube\n- TikTok\n- Instagram\n- Spotify\n- VK\n- Pinterest\n- Яндекс\n\n"
+        "- YouTube\n- TikTok\n- Instagram\n- Spotify\n- VK\n- Pinterest\n- Яндекс\n- Deezer\n\n"
         "Просто отправьте мне ссылку или название трека для поиска!\n\n"
         "После скачивания вы можете конвертировать файл или обрезать его.\n\n"
-        f"Присоединяйтесь к нашему чату: {SUPPORT_CHAT_LINK}"
+        "Бот создан при поддержке невероятного чата Freedom!\n"
+        f"Присоединяйтесь: {SUPPORT_CHAT_LINK}"
     )
     
     await update.message.reply_text(
@@ -190,11 +305,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Проверка на ссылку
     if any(domain in user_input for domain in SUPPORTED_PLATFORMS):
+        # Проверим, не плейлист ли это
+        try:
+            ydl_opts = {
+                'extract_flat': True,
+                'quiet': True,
+            }
+            if YOUTUBE_COOKIES:
+                ydl_opts['cookiefile'] = YOUTUBE_COOKIES
+            
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(user_input, download=False)
+                if info.get('_type') == 'playlist':
+                    USER_STATES[chat_id] = {
+                        'playlist': info,
+                        'url': user_input
+                    }
+                    await show_playlist_options(update, info)
+                    return
+        except Exception as e:
+            logger.error(f"Ошибка при проверке плейлиста: {e}")
+        
+        # Обычная ссылка (не плейлист или ошибка)
         USER_STATES[chat_id] = {"url": user_input}
         await show_conversion_options(update)
     else:
         # Поиск музыки
         await search_music(update, user_input)
+
+# Показать варианты для плейлиста
+async def show_playlist_options(update: Update, playlist_info: dict):
+    keyboard = [
+        [InlineKeyboardButton("🔍 Выбрать треки", callback_data="playlist_choose_tracks")]
+    ]
+    await update.message.reply_text(
+        f"🎵 Найден плейлист: {playlist_info.get('title', 'Без названия')}\n"
+        f"Количество треков: {len(playlist_info.get('entries', []))}\n\n"
+        "Вы можете выбрать треки для скачивания:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # Показать варианты конвертации
 async def show_conversion_options(update: Update):
@@ -282,7 +431,7 @@ async def handle_conversion_choice(update: Update, context: ContextTypes.DEFAULT
             
     except Exception as e:
         logger.error(f"Ошибка обработки медиа: {e}")
-        await query.edit_message_text("❌ Произошла ошибка при обработке файла.")
+        await query.edit_message_text(f"❌ Произошла ошибка при обработке файла: {str(e)}")
 
 # Поиск музыки
 async def search_music(update: Update, query: str):
@@ -290,23 +439,15 @@ async def search_music(update: Update, query: str):
     await update.message.reply_text(f"🔍 Ищу музыку по запросу: {query}...")
     
     try:
-        ydl_opts = {
-            "format": "bestaudio/best",
-            "default_search": "ytsearch10",
-            "quiet": True
-        }
-        
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"ytsearch10:{query}", download=False)
-            if not info or "entries" not in info:
-                await update.message.reply_text("Ничего не найдено 😔")
-                return
-                
-            tracks = info["entries"]
-            SEARCH_RESULTS[chat_id] = tracks
-            SEARCH_PAGE[chat_id] = 0
+        tracks = MediaProcessor.search_multiple_sources(query)
+        if not tracks:
+            await update.message.reply_text("Ничего не найдено 😔")
+            return
             
-            await show_search_results(update, chat_id, 0)
+        SEARCH_RESULTS[chat_id] = tracks
+        SEARCH_PAGE[chat_id] = 0
+        
+        await show_search_results(update, chat_id, 0)
             
     except Exception as e:
         logger.error(f"Ошибка поиска: {e}")
@@ -329,9 +470,25 @@ async def show_search_results(update: Update, chat_id: int, page: int):
     
     keyboard = []
     for track in page_tracks:
-        title = track.get("title", "Без названия")[:30] + "..." if len(track.get("title", "")) > 30 else track.get("title", "Без названия")
+        source_icon = ""
+        if "source" in track:
+            if track["source"] == "vk":
+                source_icon = "🔵"
+            elif track["source"] == "spotify":
+                source_icon = "🟢"
+            elif track["source"] == "deezer":
+                source_icon = "🟣"
+            elif track["source"] == "yandex":
+                source_icon = "🟡"
+            else:
+                source_icon = "🔴"
+                
+        title = track.get("title", "Без названия")
+        if len(title) > 30:
+            title = title[:30] + "..."
+        
         keyboard.append([InlineKeyboardButton(
-            f"🎵 {title}",
+            f"{source_icon} {title}",
             callback_data=f"track_{track['id']}"
         )])
     
@@ -461,6 +618,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_search_results(update, chat_id, page)
     elif data == "download_all":
         await download_all_tracks(update, context, chat_id)
+    elif data == "playlist_choose_tracks":
+        await choose_playlist_tracks(update, context)
+
+# Выбор треков из плейлиста
+async def choose_playlist_tracks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = query.message.chat_id
+    playlist_info = USER_STATES[chat_id]['playlist']
+    tracks = playlist_info['entries']
+    SEARCH_RESULTS[chat_id] = tracks
+    SEARCH_PAGE[chat_id] = 0
+    await show_search_results(update, chat_id, 0)
 
 # Скачать конкретный трек
 async def download_track(update: Update, context: ContextTypes.DEFAULT_TYPE, track_id: str):
@@ -476,6 +646,7 @@ async def download_track(update: Update, context: ContextTypes.DEFAULT_TYPE, tra
     await query.edit_message_text(f"⏳ Скачиваю: {track['title']}...")
     
     try:
+        # Для треков из плейлиста используем оригинальный URL
         url = track.get("url") or f"https://youtu.be/{track_id}"
         file_path, thumbnail_path, info = MediaProcessor.download_media(url, "audio")
         MediaProcessor.add_metadata(file_path, thumbnail_path, info)
@@ -497,7 +668,7 @@ async def download_track(update: Update, context: ContextTypes.DEFAULT_TYPE, tra
             
     except Exception as e:
         logger.error(f"Ошибка скачивания трека: {e}")
-        await query.edit_message_text("❌ Ошибка при скачивании трека.")
+        await query.edit_message_text(f"❌ Ошибка при скачивании трека: {str(e)}")
 
 # Скачать все треки на странице
 async def download_all_tracks(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
