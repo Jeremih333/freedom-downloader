@@ -1,6 +1,6 @@
-python-telegram-bot==20.3
-yt-dlp==2023.7.6
-mutagen==1.47.0
-moviepy==1.0.3
-Pillow==10.0.0
-requests==2.31.0
+python-telegram-bot
+yt-dlp
+mutagen
+moviepy
+Pillow
+requests
