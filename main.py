@@ -118,7 +118,7 @@ class MediaProcessor:
         output_path = f"{base}_trimmed{ext}"
         
         # Форматируем время для FFmpeg
-        start_str = str(datetime.utcfromtimestamp(start).time())
+        start_str = str(start)
         duration_str = str(end - start) if end else None
         
         # Команда для обрезки
@@ -548,12 +548,16 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(\d+:\d+|\d+\.\d+|\d+)-?(\d+:\d+|\d+\.\d+|\d+)?"), handle_time_range))
     
     # Запуск бота на Render
-    if "RENDER" in os.environ:
+    if os.environ.get('RENDER'):
+        # Получаем имя хоста Render
+        hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'your-render-app-name.onrender.com')
+        webhook_url = f"https://{hostname}/{TOKEN}"
+        
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
             url_path=TOKEN,
-            webhook_url=f"https://your-render-app-name.onrender.com/{TOKEN}"
+            webhook_url=webhook_url
         )
     else:
         application.run_polling()
