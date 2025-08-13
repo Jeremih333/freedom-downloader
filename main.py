@@ -2,6 +2,7 @@ import os
 import re
 import logging
 import asyncio
+import subprocess
 from datetime import datetime
 from io import BytesIO
 
@@ -26,7 +27,6 @@ from telegram.ext import (
 from yt_dlp import YoutubeDL
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, APIC, TIT2, TPE1, TALB
-from moviepy.editor import VideoFileClip, AudioFileClip
 
 # Настройка логирования
 logging.basicConfig(
@@ -114,18 +114,45 @@ class MediaProcessor:
 
     @staticmethod
     def trim_media(file_path: str, start: float, end: float = None):
-        output_path = file_path.replace(".", "_trimmed.")
+        base, ext = os.path.splitext(file_path)
+        output_path = f"{base}_trimmed{ext}"
         
-        if file_path.endswith(".mp4") or file_path.endswith(".mkv"):
-            clip = VideoFileClip(file_path).subclip(start, end)
-            clip.write_videofile(output_path, codec="libx264", audio_codec="aac")
-            clip.close()
-        else:
-            clip = AudioFileClip(file_path).subclip(start, end)
-            clip.write_audiofile(output_path)
-            clip.close()
-            
-        return output_path
+        # Форматируем время для FFmpeg
+        start_str = str(datetime.utcfromtimestamp(start).time())
+        duration_str = str(end - start) if end else None
+        
+        # Команда для обрезки
+        cmd = [
+            'ffmpeg',
+            '-y',  # Перезаписать выходной файл без подтверждения
+            '-ss', start_str,  # Начальная точка обрезки
+            '-i', file_path,  # Входной файл
+        ]
+        
+        # Указываем длительность обрезки, если задан конечный момент
+        if end:
+            cmd.extend(['-t', str(end - start)])
+        
+        # Для сохранения качества видео
+        if ext.lower() in ['.mp4', '.mkv', '.avi', '.mov']:
+            cmd.extend([
+                '-c:v', 'libx264',
+                '-c:a', 'aac',
+                '-strict', 'experimental'
+            ])
+        # Для аудио файлов
+        elif ext.lower() in ['.mp3', '.wav', '.ogg']:
+            cmd.extend(['-c:a', 'libmp3lame'])
+        
+        cmd.append(output_path)
+        
+        # Выполняем команду
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return output_path
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFmpeg error: {e.stderr.decode()}")
+            raise Exception("Ошибка при обрезке файла") from e
 
     @staticmethod
     def parse_time(time_str: str) -> float:
@@ -427,16 +454,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_trim(update, context)
     elif data.startswith("track_"):
         track_id = data.split("_")[1]
-        await download_track(update, track_id)
+        await download_track(update, context, track_id)
     elif data.startswith("page_"):
         page = int(data.split("_")[1])
         SEARCH_PAGE[chat_id] = page
         await show_search_results(update, chat_id, page)
     elif data == "download_all":
-        await download_all_tracks(update, chat_id)
+        await download_all_tracks(update, context, chat_id)
 
 # Скачать конкретный трек
-async def download_track(update: Update, track_id: str):
+async def download_track(update: Update, context: ContextTypes.DEFAULT_TYPE, track_id: str):
     query = update.callback_query
     chat_id = query.message.chat_id
     tracks = SEARCH_RESULTS.get(chat_id, [])
@@ -473,7 +500,7 @@ async def download_track(update: Update, track_id: str):
         await query.edit_message_text("❌ Ошибка при скачивании трека.")
 
 # Скачать все треки на странице
-async def download_all_tracks(update: Update, chat_id: int):
+async def download_all_tracks(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     query = update.callback_query
     await query.edit_message_text("⏳ Начинаю скачивание всех треков...")
     
