@@ -1,33 +1,36 @@
 import os
-from yt_dlp import YoutubeDL
-import boto3
+import yt_dlp
+from aiogram import Bot
+from bot.main import BOT_TOKEN
 
-def download_job(url, chat_id, format="mp4", quality="best"):
-    """
-    Скачивает видео/аудио и отправляет напрямую или через S3 при превышении лимита.
-    """
-    max_bytes = int(os.getenv("MAX_DIRECT_SEND_BYTES", 50000000))
+# Подпись для всех файлов
+SIGNATURE_TEXT = "Скачано через [Freedom Downloader](https://t.me/freedom_downloadbot)"
+
+def download_job(url: str, chat_id: int):
+    bot = Bot(token=BOT_TOKEN)
     ydl_opts = {
-        'format': 'bestvideo+bestaudio/best',
-        'outtmpl': '/tmp/%(title)s.%(ext)s',
-        'quiet': True,
+        'format': 'best',
+        'outtmpl': f'/tmp/%(title)s.%(ext)s',
+        'noplaylist': False,
     }
 
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        file_path = ydl.prepare_filename(info)
-        file_size = os.path.getsize(file_path)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
 
-    if file_size > max_bytes:
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-            region_name=os.getenv("S3_REGION"),
-        )
-        key = os.path.basename(file_path)
-        s3.upload_file(file_path, os.getenv("S3_BUCKET"), key)
-        download_link = f"https://{os.getenv('S3_BUCKET')}.{os.getenv('S3_REGION')}/{key}"
-        return f"Файл слишком большой, скачайте здесь: {download_link}\n\nСкачано через Freedom Downloader: https://t.me/freedom_downloadbot"
+        # Отправляем файл пользователю с подписью
+        asyncio.run(send_file(bot, chat_id, filename))
+
+    except Exception as e:
+        asyncio.run(bot.send_message(chat_id, f"Ошибка при скачивании: {e}"))
+
+async def send_file(bot: Bot, chat_id: int, path: str):
+    if os.path.exists(path):
+        try:
+            with open(path, "rb") as f:
+                await bot.send_document(chat_id, f, caption=SIGNATURE_TEXT, parse_mode="Markdown")
+        finally:
+            os.remove(path)
     else:
-        return file_path  # Telegram бот отправит файл напрямую
+        await bot.send_message(chat_id, "Файл не найден после скачивания.")
