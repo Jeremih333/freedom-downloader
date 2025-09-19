@@ -1,98 +1,60 @@
-import sys
 import os
+import asyncio
+from aiohttp import web
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from redis import Redis
-from rq import Queue
-from downloader.task import download_job
-from aiohttp import web
 
-# ========================
-# Проверка переменных окружения
-# ========================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-REDIS_URL = os.getenv("REDIS_URL")
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
-PORT = int(os.environ.get("PORT", 10000))
+TOKEN = os.getenv("BOT_TOKEN", "8124694420:AAF_JEs9oG3MxJzvx0X_9Vebxq0B5Fv0KUA")
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = f"https://freedom-downloader-2duc.onrender.com{WEBHOOK_PATH}"
 
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
-if not REDIS_URL:
-    raise RuntimeError("REDIS_URL не задан в переменных окружения")
-if not RENDER_URL:
-    raise RuntimeError("RENDER_EXTERNAL_URL не задана в переменных окружения")
-
-WEBHOOK_URL = RENDER_URL + "/webhook"
-
-# ========================
-# Добавляем корень проекта в sys.path
-# ========================
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# ========================
-# Инициализация бота и диспетчера
-# ========================
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# ========================
-# Подключение к Redis и очередь задач
-# ========================
-redis_conn = Redis.from_url(REDIS_URL)
-queue = Queue(connection=redis_conn)
 
-# ========================
-# Обработчики команд
-# ========================
+# === HANDLERS ===
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer(
-        "Привет! Отправьте ссылку на видео или название трека/альбома."
-    )
+    await message.answer("Привет! Я бот для скачивания медиа. Отправь ссылку или запрос 🔗")
+
 
 @dp.message()
-async def handle_link(message: types.Message):
-    url = message.text.strip()
-    if not url:
-        await message.answer("Пустая ссылка или название. Попробуйте снова.")
-        return
-    # Добавляем задачу в очередь
-    job = queue.enqueue(download_job, url, message.chat.id)
-    await message.answer(f"Задача принята! ID: {job.id}")
+async def handle_message(message: types.Message):
+    await message.answer(f"Ты прислал: {message.text}")
 
-# ========================
-# Функции для webhook
-# ========================
-async def on_startup(app: web.Application):
-    await bot.set_webhook(WEBHOOK_URL)
 
-async def on_shutdown(app: web.Application):
-    await bot.delete_webhook()
-    await bot.session.close()
-
-# ========================
-# Обработка апдейтов через aiohttp
-# ========================
+# === WEBHOOK ===
 async def handle_webhook(request: web.Request):
     try:
         data = await request.json()
-        print("Webhook received:", data)  # лог апдейта
+        print("Webhook received:", data)  # Логируем апдейт
         update = types.Update(**data)
-        await dp.feed_update(update, bot)  # <-- Важно: передаём bot
+        await dp.feed_update(bot, update)  # ✅ правильный вызов
         return web.Response(text="OK")
     except Exception as e:
         print("Webhook error:", e)
         return web.Response(status=500, text="Error")
 
-# ========================
-# Запуск Aiohttp веб-сервера
-# ========================
-async def init_app():
+
+async def on_startup(app: web.Application):
+    # Удаляем старые вебхуки
+    await bot.delete_webhook(drop_pending_updates=True)
+    # Ставим новый
+    await bot.set_webhook(WEBHOOK_URL)
+    print(f"Webhook установлен: {WEBHOOK_URL}")
+
+
+async def on_shutdown(app: web.Application):
+    await bot.session.close()
+
+
+def init_app():
     app = web.Application()
-    app.router.add_post("/webhook", handle_webhook)
+    app.router.add_post(WEBHOOK_PATH, handle_webhook)
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_shutdown)
     return app
 
+
 if __name__ == "__main__":
-    web.run_app(init_app(), host="0.0.0.0", port=PORT)
+    web.run_app(init_app(), host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
