@@ -1,0 +1,6 @@
+- Keep BOT_TOKEN and other secrets in Render environment variables (do NOT store in repo).
+- Consider moving heavy tasks to a separate paid worker outside Render free tier if load increases.
+- Replace yt-dlp search/probe with provider APIs (YouTube Data API, Spotify API) for better reliability and TOS compliance.
+- Monitor costs for S3 and network egress.
+- Implement user quota and rate-limits if opening bot to public.
+- Consider metrics (Prometheus) and error tracking (Sentry) for production.

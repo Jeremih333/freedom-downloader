@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: freedom-downloader-web
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: web: python bot/main.py
+    envVars:
+      - key: BOT_TOKEN
+      - key: RENDER_EXTERNAL_URL
+      - key: PORT
+      - key: REDIS_URL
+  - type: worker
+    name: freedom-downloader-worker
+    env: python
+    plan: free
+    startCommand: worker: python downloader/worker.py
+    envVars:
+      - key: REDIS_URL
+      - key: AWS_ACCESS_KEY_ID
+      - key: AWS_SECRET_ACCESS_KEY
+      - key: S3_BUCKET
