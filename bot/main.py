@@ -1,63 +1,46 @@
 import os
-import logging
-from aiohttp import web
-from aiogram import Bot, Dispatcher
-from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.types import Update
+from aiogram import Bot, Dispatcher, types
+from aiogram.utils.executor import start_webhook
+from redis import Redis
+from rq import Queue
+from downloader.task import download_job
 
-from bot.handlers import register_handlers
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL") + "/webhook"
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("bot.main")
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot)
 
-TOKEN = os.getenv("BOT_TOKEN")
-PORT = int(os.getenv("PORT", 10000))
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
-WEBHOOK_PATH = f"/webhook/{TOKEN}"
+# Подключение к Redis и очередь задач
+redis_conn = Redis.from_url(os.getenv("REDIS_URL"))
+queue = Queue(connection=redis_conn)
 
-if not TOKEN or not RENDER_EXTERNAL_URL:
-    logger.error("BOT_TOKEN and RENDER_EXTERNAL_URL must be set")
-    raise SystemExit(1)
+@dp.message_handler(commands=["start"])
+async def cmd_start(message: types.Message):
+    await message.answer(
+        "Привет! Отправьте ссылку на видео или название трека/альбома."
+    )
 
+@dp.message_handler()
+async def handle_link(message: types.Message):
+    url = message.text
+    # Добавляем задачу в очередь
+    job = queue.enqueue(download_job, url, message.chat.id)
+    await message.answer(f"Задача принята! ID: {job.id}")
 
-async def handle_update(request: web.Request):
-    data = await request.json()
-    update = Update(**data)
-    await request.app["dp"].feed_webhook_update(request.app["bot"], update)
-    return web.Response(text="ok")
+async def on_startup(dp):
+    await bot.set_webhook(WEBHOOK_URL)
 
-
-async def on_startup(app: web.Application):
-    bot: Bot = app["bot"]
-    webhook_url = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
-    await bot.set_webhook(webhook_url)
-    logger.info("Webhook set: %s", webhook_url)
-
-
-async def on_shutdown(app: web.Application):
-    bot: Bot = app["bot"]
+async def on_shutdown(dp):
     await bot.delete_webhook()
-    await bot.session.close()
-
-
-def create_app():
-    session = AiohttpSession()
-    bot = Bot(token=TOKEN, session=session)
-    dp = Dispatcher()
-
-    register_handlers(dp)
-
-    app = web.Application()
-    app["bot"] = bot
-    app["dp"] = dp
-
-    app.router.add_post(WEBHOOK_PATH, handle_update)
-
-    app.on_startup.append(on_startup)
-    app.on_shutdown.append(on_shutdown)
-    return app
-
 
 if __name__ == "__main__":
-    app = create_app()
-    web.run_app(app, host="0.0.0.0", port=PORT)
+    start_webhook(
+        dispatcher=dp,
+        webhook_path="/webhook",
+        skip_updates=True,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000)),
+    )
