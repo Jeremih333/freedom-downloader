@@ -1,60 +1,62 @@
 import os
-import asyncio
+import logging
 from aiohttp import web
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
+from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.types import Update
 
-TOKEN = os.getenv("BOT_TOKEN", "8124694420:AAF_JEs9oG3MxJzvx0X_9Vebxq0B5Fv0KUA")
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = f"https://freedom-downloader-2duc.onrender.com{WEBHOOK_PATH}"
+from bot.handlers import register_handlers
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("bot.main")
 
+TOKEN = os.getenv("BOT_TOKEN")
+PORT = int(os.getenv("PORT", 10000))
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
+WEBHOOK_PATH = f"/webhook/{TOKEN}"
 
-# === HANDLERS ===
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    await message.answer("Привет! Я бот для скачивания медиа. Отправь ссылку или запрос 🔗")
-
-
-@dp.message()
-async def handle_message(message: types.Message):
-    await message.answer(f"Ты прислал: {message.text}")
+if not TOKEN or not RENDER_EXTERNAL_URL:
+    logger.error("BOT_TOKEN and RENDER_EXTERNAL_URL must be set")
+    raise SystemExit(1)
 
 
-# === WEBHOOK ===
-async def handle_webhook(request: web.Request):
-    try:
-        data = await request.json()
-        print("Webhook received:", data)  # Логируем апдейт
-        update = types.Update(**data)
-        await dp.feed_update(bot, update)  # ✅ правильный вызов
-        return web.Response(text="OK")
-    except Exception as e:
-        print("Webhook error:", e)
-        return web.Response(status=500, text="Error")
+async def handle_update(request: web.Request):
+    data = await request.json()
+    update = Update(**data)
+    await request.app["dp"].feed_webhook_update(request.app["bot"], update)
+    return web.Response(text="ok")
 
 
 async def on_startup(app: web.Application):
-    # Удаляем старые вебхуки
-    await bot.delete_webhook(drop_pending_updates=True)
-    # Ставим новый
-    await bot.set_webhook(WEBHOOK_URL)
-    print(f"Webhook установлен: {WEBHOOK_URL}")
+    bot: Bot = app["bot"]
+    webhook_url = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
+    await bot.set_webhook(webhook_url, drop_pending_updates=True)
+    logger.info("Webhook set: %s", webhook_url)
 
 
 async def on_shutdown(app: web.Application):
+    bot: Bot = app["bot"]
+    await bot.delete_webhook()
     await bot.session.close()
 
 
-def init_app():
+def create_app():
+    session = AiohttpSession()
+    bot = Bot(token=TOKEN, session=session)
+    dp = Dispatcher()
+
+    register_handlers(dp)
+
     app = web.Application()
-    app.router.add_post(WEBHOOK_PATH, handle_webhook)
+    app["bot"] = bot
+    app["dp"] = dp
+
+    app.router.add_post(WEBHOOK_PATH, handle_update)
     app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_shutdown)
+    app.on_shutdown.append(on_shutdown)
     return app
 
 
 if __name__ == "__main__":
-    web.run_app(init_app(), host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+    app = create_app()
+    web.run_app(app, host="0.0.0.0", port=PORT)
