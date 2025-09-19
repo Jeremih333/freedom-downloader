@@ -8,12 +8,21 @@ from downloader.task import download_job
 from aiohttp import web
 
 # ========================
-# Переменные окружения
+# Проверка переменных окружения
 # ========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL") + "/webhook"
-PORT = int(os.environ.get("PORT", 10000))
 REDIS_URL = os.getenv("REDIS_URL")
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
+PORT = int(os.environ.get("PORT", 10000))
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
+if not REDIS_URL:
+    raise RuntimeError("REDIS_URL не задан в переменных окружения")
+if not RENDER_URL:
+    raise RuntimeError("RENDER_EXTERNAL_URL не задана в переменных окружения")
+
+WEBHOOK_URL = RENDER_URL + "/webhook"
 
 # ========================
 # Добавляем корень проекта в sys.path
@@ -65,10 +74,14 @@ async def on_shutdown(app: web.Application):
 # Обработка апдейтов через aiohttp
 # ========================
 async def handle_webhook(request: web.Request):
-    data = await request.json()
-    update = types.Update(**data)
-    await dp.feed_update(update)
-    return web.Response(text="OK")
+    try:
+        data = await request.json()
+        update = types.Update(**data)
+        await dp.feed_update(update, bot)  # В aiogram v3 требуется передать bot
+        return web.Response(text="OK")
+    except Exception as e:
+        print("Webhook error:", e)
+        return web.Response(status=500, text="Error")
 
 # ========================
 # Запуск Aiohttp веб-сервера
