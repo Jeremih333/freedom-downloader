@@ -1,4 +1,3 @@
-import os
 import logging
 from aiogram import Dispatcher
 from aiogram.types import Message, CallbackQuery
@@ -6,7 +5,7 @@ from aiogram.filters import Command
 
 from bot.keyboards import (
     build_format_keyboard,
-    build_results_keyboard,   # заменили
+    build_search_results_keyboard,
     build_album_keyboard,
     build_pagination_keyboard,
 )
@@ -42,23 +41,26 @@ async def cmd_start(message: Message):
 async def handle_text(message: Message):
     text = message.text.strip()
     if is_url(text):
-        # direct link -> probe formats
+        # Ссылка → получаем форматы
         opts = await probe_formats_async(text)
         if not opts:
-            await message.reply("Не удалось получить форматы для этой ссылки. Попробуйте другую или отправьте текстовый запрос.")
+            await message.reply(
+                "Не удалось получить форматы для этой ссылки. "
+                "Попробуйте другую или отправьте текстовый запрос."
+            )
             return
         kb = build_format_keyboard(opts, token_id=message.message_id)
         await message.reply(MSG_SELECT_FORMAT, reply_markup=kb)
         await DownloadStates.waiting_for_format.set()
         return
 
-    # text search flow
+    # Текстовый поиск
     query = text
     results, pagination = await search_youtube_async(query, page=1)
     if not results:
         await message.reply(f"По запросу '{query}' ничего не найдено.")
         return
-    kb = build_results_keyboard(results, pagination, token_id=message.message_id)  # заменили
+    kb = build_search_results_keyboard(results, pagination, token_id=message.message_id)
     await message.reply(f"Результаты поиска для «{query}»:",
                         reply_markup=kb)
     await DownloadStates.waiting_for_format.set()
@@ -66,11 +68,12 @@ async def handle_text(message: Message):
 
 async def handle_callback(callback: CallbackQuery):
     data = callback.data or ""
+
     # FORMAT|<url>|<format_id>
     if data.startswith("FORMAT|"):
         _, url, fmt = data.split("|", 2)
         await callback.answer("Запускаю загрузку...")
-        job_meta = enqueue_download_task(url, fmt, callback.from_user.id)
+        enqueue_download_task(url, fmt, callback.from_user.id)
         await callback.message.reply(MSG_JOB_QUEUED)
         return
 
@@ -78,7 +81,7 @@ async def handle_callback(callback: CallbackQuery):
     if data.startswith("SEARCHPAGE|"):
         _, query, page = data.split("|", 2)
         results, pagination = await search_youtube_async(query, page=int(page))
-        kb = build_results_keyboard(results, pagination, token_id=callback.message.message_id)  # заменили
+        kb = build_search_results_keyboard(results, pagination, token_id=callback.message.message_id)
         await callback.message.edit_reply_markup(reply_markup=kb)
         await callback.answer()
         return
@@ -87,8 +90,8 @@ async def handle_callback(callback: CallbackQuery):
     if data.startswith("ALBUM|"):
         _, album_id = data.split("|", 1)
         meta = await get_album_meta_async(album_id)
-        kib = build_album_keyboard(meta, token_id=callback.message.message_id)
-        await callback.message.reply(f"Альбом: {meta['title']}", reply_markup=kib)
+        kb = build_album_keyboard(meta, token_id=callback.message.message_id)
+        await callback.message.reply(f"Альбом: {meta['title']}", reply_markup=kb)
         await callback.answer()
         return
 
@@ -96,9 +99,7 @@ async def handle_callback(callback: CallbackQuery):
     if data.startswith("ALBUM_DOWNLOAD|"):
         _, album_id = data.split("|", 1)
         await callback.answer("Поставил задачу на скачивание альбома...")
-        # Here you would expand album -> enqueue tracks
-        # For MVP: enqueue single job that handles album
-        job_meta = enqueue_download_task(album_id, "album", callback.from_user.id)
+        enqueue_download_task(album_id, "album", callback.from_user.id)
         await callback.message.reply(MSG_JOB_QUEUED)
         return
 
