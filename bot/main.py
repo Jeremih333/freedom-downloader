@@ -76,8 +76,9 @@ async def on_shutdown(app: web.Application):
 async def handle_webhook(request: web.Request):
     try:
         data = await request.json()
+        print("Webhook received:", data)  # лог апдейта
         update = types.Update(**data)
-        await dp.feed_update(update, bot)  # В aiogram v3 требуется передать bot
+        await dp.feed_update(update, bot)  # <-- Важно: передаём bot
         return web.Response(text="OK")
     except Exception as e:
         print("Webhook error:", e)
