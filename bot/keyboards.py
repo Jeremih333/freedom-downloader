@@ -1,88 +1,79 @@
+# bot/keyboards.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from typing import List, Dict, Tuple
 
 
-def build_format_keyboard(video_id: str) -> InlineKeyboardMarkup:
+def build_format_keyboard(formats: List[Dict], token_id: int) -> InlineKeyboardMarkup:
     """
-    Клавиатура выбора формата (аудио / видео).
+    Клавиатура для выбора формата (например, видео 720p, аудио mp3).
+    formats: список словарей {"format_id": str, "ext": str, "resolution": str}
     """
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🎵 MP3", callback_data=f"format:mp3:{video_id}"),
-                InlineKeyboardButton(text="🎥 MP4", callback_data=f"format:mp4:{video_id}"),
-            ]
-        ]
-    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for fmt in formats:
+        text = f"{fmt.get('ext', '')} {fmt.get('resolution', '')}".strip()
+        callback = f"FORMAT|{fmt['url']}|{fmt['format_id']}"
+        kb.inline_keyboard.append([InlineKeyboardButton(text=text, callback_data=callback)])
+    return kb
 
 
-def build_pagination_keyboard(current_page: int, total_pages: int) -> InlineKeyboardMarkup:
+def build_search_results_keyboard(
+    results: List[Dict],
+    pagination: Tuple[int, int, int],
+    token_id: int
+) -> InlineKeyboardMarkup:
     """
-    Клавиатура пагинации с кнопками назад/вперёд.
+    Клавиатура для результатов поиска YouTube.
+    results: [{"title": str, "url": str}]
+    pagination: (page, total_pages, per_page)
     """
-    buttons = []
+    page, total_pages, _ = pagination
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
 
-    if current_page > 1:
-        buttons.append(
-            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"page:{current_page - 1}")
-        )
-
-    buttons.append(
-        InlineKeyboardButton(text=f"{current_page}/{total_pages}", callback_data="noop")
-    )
-
-    if current_page < total_pages:
-        buttons.append(
-            InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"page:{current_page + 1}")
-        )
-
-    return InlineKeyboardMarkup(inline_keyboard=[buttons])
-
-
-def build_back_keyboard(callback: str = "back") -> InlineKeyboardMarkup:
-    """
-    Клавиатура только с кнопкой 'Назад'.
-    """
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=callback)]
-        ]
-    )
-
-
-def build_results_keyboard(results: list[dict], page: int = 1, per_page: int = 5) -> InlineKeyboardMarkup:
-    """
-    Клавиатура для отображения списка результатов (поиск).
-    results: список словарей вида {"title": str, "id": str}
-    """
-    start = (page - 1) * per_page
-    end = start + per_page
-    page_results = results[start:end]
-
-    keyboard = []
-
-    for item in page_results:
-        keyboard.append([
-            InlineKeyboardButton(
-                text=item["title"],
-                callback_data=f"select:{item['id']}"
-            )
+    # результаты поиска
+    for r in results:
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(text=r["title"], callback_data=f"FORMAT|{r['url']}|best")
         ])
 
-    total_pages = (len(results) + per_page - 1) // per_page
-    if total_pages > 1:
-        keyboard.append([
-            InlineKeyboardButton(
-                text=f"⬅️ {page - 1}" if page > 1 else " ",
-                callback_data=f"page:{page - 1}" if page > 1 else "noop"
-            ),
-            InlineKeyboardButton(
-                text=f"{page}/{total_pages}",
-                callback_data="noop"
-            ),
-            InlineKeyboardButton(
-                text=f"{page + 1} ➡️" if page < total_pages else " ",
-                callback_data=f"page:{page + 1}" if page < total_pages else "noop"
-            ),
-        ])
+    # пагинация
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"SEARCHPAGE|{r['query']}|{page-1}"))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"SEARCHPAGE|{r['query']}|{page+1}"))
 
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+    if nav:
+        kb.inline_keyboard.append(nav)
+
+    return kb
+
+
+def build_album_keyboard(meta: Dict, token_id: int) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для альбома (скачать весь альбом или треки по отдельности).
+    meta: {"id": str, "title": str, "tracks": [{"title": str, "url": str}]}
+    """
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬇️ Скачать альбом", callback_data=f"ALBUM_DOWNLOAD|{meta['id']}")]
+    ])
+
+    for track in meta.get("tracks", []):
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(text=track["title"], callback_data=f"FORMAT|{track['url']}|best")
+        ])
+    return kb
+
+
+def build_pagination_keyboard(query: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
+    """
+    Общая пагинация (например, при поиске).
+    """
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"SEARCHPAGE|{query}|{page-1}"))
+    nav.append(InlineKeyboardButton(text=f"{page}/{total_pages}", callback_data="IGNORE"))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"SEARCHPAGE|{query}|{page+1}"))
+    kb.inline_keyboard.append(nav)
+    return kb
