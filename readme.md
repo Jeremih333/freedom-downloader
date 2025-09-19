@@ -32,4 +32,5 @@ Production-minded scaffold for a Telegram bot that:
 
 See NOTES.md for more deployment details and security notes.
 
-Bot creator - https://t.me/odinnadsat
+# **Bot creator - https://t.me/odinnadsat**
+
