@@ -1,48 +1,46 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from math import ceil
-import html
-
-def build_format_keyboard(options: list, token_id: int = 0) -> InlineKeyboardMarkup:
-    """
-    options: [{'id':format_id, 'label':str, 'url':url}, ...]
-    token_id: used for tying callbacks to message to help stateless operations if needed
-    """
-    kb = InlineKeyboardMarkup(row_width=2)
-    for opt in options:
-        cb = f"FORMAT|{opt['url']}|{opt['id']}"
-        kb.insert(InlineKeyboardButton(text=opt['label'], callback_data=cb))
-    kb.insert(InlineKeyboardButton(text="Отмена ❌", callback_data="CANCEL"))
-    return kb
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
-def build_search_results_keyboard(results: list, pagination: dict, token_id: int = 0) -> InlineKeyboardMarkup:
-    """
-    results: [{'title':..., 'uploader':..., 'url':..., 'id':...}, ...]
-    pagination: {'prev':callback_data, 'next':callback_data, 'page':int}
-    """
-    kb = InlineKeyboardMarkup(row_width=1)
-    for r in results:
-        title = r.get("title", "")[:55]
-        uploader = r.get("uploader", "")
-        cb = f"FORMAT|{r['url']}|best"
-        kb.insert(InlineKeyboardButton(text=f"{title} — {uploader}", callback_data=cb))
-    # pagination row
-    row = []
-    if pagination.get("prev"):
-        row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=pagination["prev"]))
-    if pagination.get("next"):
-        row.append(InlineKeyboardButton(text="Ещё ▶️", callback_data=pagination["next"]))
-    if row:
-        kb.row(*row)
-    kb.insert(InlineKeyboardButton(text="🔎 Новый поиск", callback_data="NEW_SEARCH"))
-    return kb
+def build_main_keyboard() -> InlineKeyboardMarkup:
+    """Главное меню."""
+    keyboard = [
+        [InlineKeyboardButton(text="🔍 Поиск", callback_data="search")],
+        [InlineKeyboardButton(text="📂 Мои загрузки", callback_data="downloads")],
+        [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def build_album_keyboard(album_meta: dict, token_id: int = 0) -> InlineKeyboardMarkup:
-    kb = InlineKeyboardMarkup(row_width=1)
-    kb.insert(InlineKeyboardButton(text="Скачать весь альбом ▶️", callback_data=f"ALBUM_DOWNLOAD|{album_meta['id']}"))
-    for t in album_meta.get("tracks", []):
-        cb = f"FORMAT|{t['url']}|audio_mp3_320"
-        kb.insert(InlineKeyboardButton(text=t['title'], callback_data=cb))
-    kb.insert(InlineKeyboardButton(text="⬅️ Назад", callback_data="BACK"))
-    return kb
+def build_format_keyboard(video_id: str) -> InlineKeyboardMarkup:
+    """Кнопки выбора формата для загрузки."""
+    keyboard = [
+        [
+            InlineKeyboardButton(text="🎵 MP3", callback_data=f"format:mp3:{video_id}"),
+            InlineKeyboardButton(text="🎬 MP4", callback_data=f"format:mp4:{video_id}"),
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def build_pagination_keyboard(page: int, total_pages: int) -> InlineKeyboardMarkup:
+    """Клавиатура для переключения страниц поиска/результатов."""
+    buttons = []
+
+    if page > 1:
+        buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"page:{page-1}"))
+
+    buttons.append(InlineKeyboardButton(text=f"{page}/{total_pages}", callback_data="noop"))
+
+    if page < total_pages:
+        buttons.append(InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"page:{page+1}"))
+
+    return InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+
+def build_back_keyboard(callback: str = "back_to_main") -> InlineKeyboardMarkup:
+    """Простая кнопка 'Назад'."""
+    keyboard = [
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=callback)]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
