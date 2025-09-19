@@ -1,5 +1,0 @@
-python-telegram-bot[webhooks]
-yt-dlp
-mutagen
-Pillow
-requests
