@@ -1,16 +1,11 @@
 import sys
 import os
-
-# Добавляем корень проекта в путь поиска модулей
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from redis import Redis
 from rq import Queue
 from downloader.task import download_job
 from aiohttp import web
-import asyncio
 
 # ========================
 # Переменные окружения
@@ -19,6 +14,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL") + "/webhook"
 PORT = int(os.environ.get("PORT", 10000))
 REDIS_URL = os.getenv("REDIS_URL")
+
+# ========================
+# Добавляем корень проекта в sys.path
+# ========================
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ========================
 # Инициализация бота и диспетчера
@@ -62,11 +62,20 @@ async def on_shutdown(app: web.Application):
     await bot.session.close()
 
 # ========================
-# Запуск Aiohttp веб-сервера для webhook
+# Обработка апдейтов через aiohttp
+# ========================
+async def handle_webhook(request: web.Request):
+    data = await request.json()
+    update = types.Update(**data)
+    await dp.feed_update(update)
+    return web.Response(text="OK")
+
+# ========================
+# Запуск Aiohttp веб-сервера
 # ========================
 async def init_app():
     app = web.Application()
-    app.router.add_post("/webhook", lambda request: dp.process_update(request))
+    app.router.add_post("/webhook", handle_webhook)
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_shutdown)
     return app
