@@ -1,61 +1,75 @@
+import sys
 import os
-import asyncio
+
+# Добавляем корень проекта в путь поиска модулей
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Message
 from redis import Redis
 from rq import Queue
 from downloader.task import download_job
 from aiohttp import web
+import asyncio
 
+# ========================
+# Переменные окружения
+# ========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL") + WEBHOOK_PATH
+WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL") + "/webhook"
+PORT = int(os.environ.get("PORT", 10000))
+REDIS_URL = os.getenv("REDIS_URL")
 
+# ========================
+# Инициализация бота и диспетчера
+# ========================
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# ========================
 # Подключение к Redis и очередь задач
-redis_conn = Redis.from_url(os.getenv("REDIS_URL"))
+# ========================
+redis_conn = Redis.from_url(REDIS_URL)
 queue = Queue(connection=redis_conn)
 
-# Хендлер /start
+# ========================
+# Обработчики команд
+# ========================
 @dp.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: types.Message):
     await message.answer(
         "Привет! Отправьте ссылку на видео или название трека/альбома."
     )
 
-# Хендлер для текста (ссылки)
 @dp.message()
-async def handle_link(message: Message):
-    url = message.text
+async def handle_link(message: types.Message):
+    url = message.text.strip()
+    if not url:
+        await message.answer("Пустая ссылка или название. Попробуйте снова.")
+        return
     # Добавляем задачу в очередь
     job = queue.enqueue(download_job, url, message.chat.id)
     await message.answer(f"Задача принята! ID: {job.id}")
 
-# aiohttp сервер для webhook
-async def handle_webhook(request):
-    try:
-        data = await request.json()
-        update = types.Update(**data)
-        await dp.feed_update(update)
-    except Exception as e:
-        print(f"Ошибка webhook: {e}")
-    return web.Response(text="OK")
-
-async def on_startup(app):
+# ========================
+# Функции для webhook
+# ========================
+async def on_startup(app: web.Application):
     await bot.set_webhook(WEBHOOK_URL)
 
-async def on_shutdown(app):
+async def on_shutdown(app: web.Application):
     await bot.delete_webhook()
     await bot.session.close()
 
-app = web.Application()
-app.router.add_post(WEBHOOK_PATH, handle_webhook)
-app.on_startup.append(on_startup)
-app.on_shutdown.append(on_shutdown)
+# ========================
+# Запуск Aiohttp веб-сервера для webhook
+# ========================
+async def init_app():
+    app = web.Application()
+    app.router.add_post("/webhook", lambda request: dp.process_update(request))
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_shutdown)
+    return app
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    web.run_app(app, host="0.0.0.0", port=port)
+    web.run_app(init_app(), host="0.0.0.0", port=PORT)
