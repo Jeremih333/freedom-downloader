@@ -6,7 +6,7 @@ from aiogram.filters import Command
 
 from bot.keyboards import (
     build_format_keyboard,
-    build_search_results_keyboard,
+    build_results_keyboard,   # заменили
     build_album_keyboard,
     build_pagination_keyboard,
 )
@@ -58,7 +58,7 @@ async def handle_text(message: Message):
     if not results:
         await message.reply(f"По запросу '{query}' ничего не найдено.")
         return
-    kb = build_search_results_keyboard(results, pagination, token_id=message.message_id)
+    kb = build_results_keyboard(results, pagination, token_id=message.message_id)  # заменили
     await message.reply(f"Результаты поиска для «{query}»:",
                         reply_markup=kb)
     await DownloadStates.waiting_for_format.set()
@@ -78,7 +78,7 @@ async def handle_callback(callback: CallbackQuery):
     if data.startswith("SEARCHPAGE|"):
         _, query, page = data.split("|", 2)
         results, pagination = await search_youtube_async(query, page=int(page))
-        kb = build_search_results_keyboard(results, pagination, token_id=callback.message.message_id)
+        kb = build_results_keyboard(results, pagination, token_id=callback.message.message_id)  # заменили
         await callback.message.edit_reply_markup(reply_markup=kb)
         await callback.answer()
         return
